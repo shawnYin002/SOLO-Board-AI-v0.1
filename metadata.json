@@ -1,0 +1,5 @@
+{
+  "name": "SOLO Board AI",
+  "description": "A whiteboard-style generative AI interface using Gemini Nano Banana models for image generation and editing.",
+  "requestFramePermissions": []
+}
