@@ -6,6 +6,21 @@ const KIE_BASE_URL = 'https://api.kie.ai/api/v1/jobs';
 const IMGBB_UPLOAD_URL = 'https://api.imgbb.com/1/upload';
 const GITHUB_API_URL = 'https://api.github.com';
 
+// Helper: Safe ID Generation (Polyfill for crypto.randomUUID in non-secure contexts)
+const generateSafeId = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    try {
+      return crypto.randomUUID();
+    } catch (e) {
+      // Fallback if context is not secure
+    }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 // Helper to get keys
 const getKeys = () => {
   let kieKey = localStorage.getItem('kie_api_key') || '';
@@ -48,14 +63,15 @@ const uploadToImgBB = async (base64Str: string, apiKey: string): Promise<string>
     }
 };
 
-// --- GitHub Upload ---
-const uploadToGitHub = async (base64Str: string, config: { token: string, user: string, repo: string }): Promise<string> => {
+// --- GitHub Upload with Retry & Better Error Handling ---
+const uploadToGitHub = async (base64Str: string, config: { token: string, user: string, repo: string }, retryCount = 0): Promise<string> => {
     const { token, user, repo } = config;
     const cleanBase64 = base64Str.replace(/^data:image\/\w+;base64,/, '');
     
-    // Generate unique filename using UUID to prevent race conditions
-    const filename = `solo_${crypto.randomUUID()}.png`;
+    // Use safe ID generation
+    const filename = `solo_${generateSafeId()}.png`;
     const path = `uploads/${filename}`;
+    const url = `${GITHUB_API_URL}/repos/${user}/${repo}/contents/${path}`;
     
     const body = {
         message: `Upload via SoloBoardAI: ${filename}`,
@@ -63,7 +79,7 @@ const uploadToGitHub = async (base64Str: string, config: { token: string, user: 
     };
     
     try {
-        const res = await fetch(`${GITHUB_API_URL}/repos/${user}/${repo}/contents/${path}`, {
+        const res = await fetch(url, {
             method: 'PUT',
             headers: {
                 'Authorization': `token ${token}`,
@@ -74,15 +90,46 @@ const uploadToGitHub = async (base64Str: string, config: { token: string, user: 
         });
 
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.message || 'GitHub API Error');
+            // Detailed Error Parsing
+            let errorMessage = `HTTP ${res.status}`;
+            try {
+                const errData = await res.json();
+                errorMessage = errData.message || errorMessage;
+                if (errData.errors) {
+                    errorMessage += ` (${JSON.stringify(errData.errors)})`;
+                }
+            } catch (e) {
+                errorMessage = res.statusText;
+            }
+
+            // Handle specific status codes
+            if (res.status === 401) throw new Error("GitHub Token 无效或已过期");
+            if (res.status === 403) throw new Error("GitHub API 权限不足或被限流");
+            if (res.status === 404) throw new Error("GitHub 仓库未找到 (检查用户名/仓库名)");
+            if (res.status === 409) throw new Error("GitHub 文件冲突 (请重试)");
+            if (res.status === 413) throw new Error("GitHub 文件过大 (API限制)");
+            if (res.status === 422) throw new Error("GitHub 内容验证失败 (可能文件过大或格式错误)");
+
+            throw new Error(`GitHub API Error: ${errorMessage}`);
         }
         
         // Construct jsDelivr URL for fast CDN access
-        // https://fastly.jsdelivr.net/gh/user/repo/path
         return `https://fastly.jsdelivr.net/gh/${user}/${repo}/${path}`;
 
     } catch (e: any) {
+        // Retry logic for network errors (not auth errors)
+        const isAuthError = e.message.includes('Token') || e.message.includes('权限') || e.message.includes('仓库') || e.message.includes('过大');
+        if (!isAuthError && retryCount < 2) {
+             logger.info(`GitHub 上传失败，正在重试 (${retryCount + 1}/2)...`, { error: e.message });
+             await new Promise(r => setTimeout(r, 1000 * (retryCount + 1))); // Backoff
+             return uploadToGitHub(base64Str, config, retryCount + 1);
+        }
+        
+        // Don't throw here inside retry recursion if we want to bubble up the final error naturally,
+        // but for the final attempt, we throw.
+        // If we are here, it means we ran out of retries or it's an auth error.
+        
+        // logger.error("GitHub 上传最终失败", { url, error: e.message }); // Logged in caller
         throw new Error(`GitHub 上传失败: ${e.message}`);
     }
 };
@@ -105,7 +152,7 @@ const prepareInputImages = async (inputImages: string[]): Promise<string[]> => {
     const { imgbbKey, github } = getKeys();
     const processedImages: string[] = [];
     
-    logger.info("正在预处理/上传输入图片...", { count: inputImages.length });
+    // logger.info("正在预处理/上传输入图片...", { count: inputImages.length });
 
     for (let i = 0; i < inputImages.length; i++) {
         const img = inputImages[i];
@@ -114,25 +161,31 @@ const prepareInputImages = async (inputImages: string[]): Promise<string[]> => {
         if (img.startsWith('data:image')) {
             let uploadedUrl = '';
             
+            // Calculate size for debugging
+            const head = img.indexOf(',');
+            const sizeInBytes = Math.ceil((img.length - head - 1) * 3 / 4);
+            const sizeInMB = (sizeInBytes / (1024 * 1024)).toFixed(2);
+            
             // Priority 1: GitHub
             if (github.token && github.user && github.repo) {
-                 logger.info(`[GitHub] 正在上传图片 ${i+1}/${inputImages.length}...`);
+                 logger.info(`[GitHub] 正在上传图片 ${i+1}/${inputImages.length}... (Size: ${sizeInMB}MB)`);
                  try {
                      uploadedUrl = await uploadToGitHub(img, github);
                      logger.success(`GitHub 上传成功`, { url: uploadedUrl });
                  } catch (e: any) {
-                     logger.error("GitHub 上传失败", e);
+                     // Explicitly log message object so DebugPanel shows it correctly
+                     logger.error("GitHub 上传失败", { message: e.message, stack: e.stack });
                      throw e;
                  }
             } 
             // Priority 2: ImgBB
             else if (imgbbKey) {
-                logger.info(`[ImgBB] 正在上传图片 ${i+1}/${inputImages.length}...`);
+                logger.info(`[ImgBB] 正在上传图片 ${i+1}/${inputImages.length}... (Size: ${sizeInMB}MB)`);
                 try {
                     uploadedUrl = await uploadToImgBB(img, imgbbKey);
                     logger.success(`ImgBB 上传成功`, { url: uploadedUrl });
                 } catch (e: any) {
-                    logger.error("ImgBB 上传失败", e);
+                    logger.error("ImgBB 上传失败", { message: e.message });
                     throw e;
                 }
             } 

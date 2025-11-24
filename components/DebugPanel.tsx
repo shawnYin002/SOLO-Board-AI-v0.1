@@ -19,6 +19,17 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ onClose }) => {
     alert("日志已复制");
   };
 
+  const renderDetails = (details: any) => {
+    if (typeof details === 'object' && details !== null) {
+        // If it looks like an error object with message/stack but failed instanceof check or was constructed manually
+        if ('message' in details && ('stack' in details || 'name' in details)) {
+            return `${details.name || 'Error'}: ${details.message}\n${details.stack || ''}`;
+        }
+        return JSON.stringify(details, null, 2);
+    }
+    return String(details);
+  };
+
   return (
     <div className="fixed bottom-24 right-4 w-[500px] h-[400px] bg-slate-900 text-slate-200 rounded-xl shadow-2xl border border-slate-700 flex flex-col z-[100] font-mono text-xs animate-in slide-in-from-bottom-10 fade-in">
       <div className="flex items-center justify-between p-3 border-b border-slate-700 bg-slate-800 rounded-t-xl select-none">
@@ -62,7 +73,7 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ onClose }) => {
              {log.details && (
                  <div className="mt-2 bg-black/50 p-2 rounded border border-slate-800 overflow-x-auto">
                      <pre className="text-[10px] text-slate-400">
-                         {typeof log.details === 'object' ? JSON.stringify(log.details, null, 2) : String(log.details)}
+                         {renderDetails(log.details)}
                      </pre>
                  </div>
              )}
