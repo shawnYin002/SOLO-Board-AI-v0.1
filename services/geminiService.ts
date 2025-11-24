@@ -1,24 +1,40 @@
 
+
 import { ModelType, AspectRatio, Resolution } from '../types';
+import { getModelConfig } from '../models';
 import { logger } from './logger';
+import { uploadToR2 } from './r2';
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1/jobs';
-const IMGBB_UPLOAD_URL = 'https://api.imgbb.com/1/upload';
-const GITHUB_API_URL = 'https://api.github.com';
 
-// Helper: Safe ID Generation (Polyfill for crypto.randomUUID in non-secure contexts)
-const generateSafeId = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+// Helper: Robust Error Message Extraction
+const extractErrorMessage = (data: any, defaultMsg: string): string => {
     try {
-      return crypto.randomUUID();
+        if (!data) return defaultMsg;
+        if (typeof data === 'string') return data;
+        
+        if (data.message) return data.message;
+        if (data.msg) return data.msg;
+        
+        if (data.error) {
+            if (typeof data.error === 'string') return data.error;
+            if (data.error.message) return data.error.message;
+            if (data.error.msg) return data.error.msg;
+        }
+
+        if (data.failMsg) return data.failMsg;
+        if (data.fail_msg) return data.fail_msg;
+        if (data.reason) return data.reason;
+        if (data.failure_reason) return data.failure_reason;
+        
+        if (Array.isArray(data.errors) && data.errors.length > 0) {
+            return data.errors[0].message || JSON.stringify(data.errors);
+        }
+
+        return defaultMsg;
     } catch (e) {
-      // Fallback if context is not secure
+        return defaultMsg;
     }
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
 };
 
 // Helper to get keys
@@ -27,111 +43,7 @@ const getKeys = () => {
   if (kieKey.toLowerCase().startsWith('bearer ')) {
     kieKey = kieKey.substring(7).trim();
   }
-  
-  const imgbbKey = localStorage.getItem('imgbb_api_key') || '';
-  
-  const ghToken = localStorage.getItem('gh_token') || '';
-  const ghUser = localStorage.getItem('gh_user') || '';
-  const ghRepo = localStorage.getItem('gh_repo') || '';
-  
-  return { 
-      kieKey: kieKey.trim(), 
-      imgbbKey: imgbbKey.trim(),
-      github: { token: ghToken.trim(), user: ghUser.trim(), repo: ghRepo.trim() }
-  };
-};
-
-// --- ImgBB Upload ---
-const uploadToImgBB = async (base64Str: string, apiKey: string): Promise<string> => {
-    const formData = new FormData();
-    const cleanBase64 = base64Str.replace(/^data:image\/\w+;base64,/, '');
-    formData.append('image', cleanBase64);
-    
-    try {
-        const res = await fetch(`${IMGBB_UPLOAD_URL}?key=${apiKey}`, {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-        if (data.success) {
-            return data.data.url;
-        } else {
-            throw new Error(data.error?.message || 'ImgBB Upload Failed');
-        }
-    } catch (e: any) {
-        throw new Error(`图床上传失败: ${e.message}`);
-    }
-};
-
-// --- GitHub Upload with Retry & Better Error Handling ---
-const uploadToGitHub = async (base64Str: string, config: { token: string, user: string, repo: string }, retryCount = 0): Promise<string> => {
-    const { token, user, repo } = config;
-    const cleanBase64 = base64Str.replace(/^data:image\/\w+;base64,/, '');
-    
-    // Use safe ID generation
-    const filename = `solo_${generateSafeId()}.png`;
-    const path = `uploads/${filename}`;
-    const url = `${GITHUB_API_URL}/repos/${user}/${repo}/contents/${path}`;
-    
-    const body = {
-        message: `Upload via SoloBoardAI: ${filename}`,
-        content: cleanBase64
-    };
-    
-    try {
-        const res = await fetch(url, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Content-Type': 'application/json',
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify(body)
-        });
-
-        if (!res.ok) {
-            // Detailed Error Parsing
-            let errorMessage = `HTTP ${res.status}`;
-            try {
-                const errData = await res.json();
-                errorMessage = errData.message || errorMessage;
-                if (errData.errors) {
-                    errorMessage += ` (${JSON.stringify(errData.errors)})`;
-                }
-            } catch (e) {
-                errorMessage = res.statusText;
-            }
-
-            // Handle specific status codes
-            if (res.status === 401) throw new Error("GitHub Token 无效或已过期");
-            if (res.status === 403) throw new Error("GitHub API 权限不足或被限流");
-            if (res.status === 404) throw new Error("GitHub 仓库未找到 (检查用户名/仓库名)");
-            if (res.status === 409) throw new Error("GitHub 文件冲突 (请重试)");
-            if (res.status === 413) throw new Error("GitHub 文件过大 (API限制)");
-            if (res.status === 422) throw new Error("GitHub 内容验证失败 (可能文件过大或格式错误)");
-
-            throw new Error(`GitHub API Error: ${errorMessage}`);
-        }
-        
-        // Construct jsDelivr URL for fast CDN access
-        return `https://fastly.jsdelivr.net/gh/${user}/${repo}/${path}`;
-
-    } catch (e: any) {
-        // Retry logic for network errors (not auth errors)
-        const isAuthError = e.message.includes('Token') || e.message.includes('权限') || e.message.includes('仓库') || e.message.includes('过大');
-        if (!isAuthError && retryCount < 2) {
-             logger.info(`GitHub 上传失败，正在重试 (${retryCount + 1}/2)...`, { error: e.message });
-             await new Promise(r => setTimeout(r, 1000 * (retryCount + 1))); // Backoff
-             return uploadToGitHub(base64Str, config, retryCount + 1);
-        }
-        
-        // Don't throw here inside retry recursion if we want to bubble up the final error naturally,
-        // but for the final attempt, we throw.
-        // If we are here, it means we ran out of retries or it's an auth error.
-        
-        // logger.error("GitHub 上传最终失败", { url, error: e.message }); // Logged in caller
-        throw new Error(`GitHub 上传失败: ${e.message}`);
-    }
+  return { kieKey: kieKey.trim() };
 };
 
 interface GenerateImageParams {
@@ -145,57 +57,32 @@ interface GenerateImageParams {
 
 const POLL_INTERVAL = 2000;
 
-// Helper to pre-upload images before starting tasks
+// Helper to pre-upload images using R2
 const prepareInputImages = async (inputImages: string[]): Promise<string[]> => {
     if (!inputImages || inputImages.length === 0) return [];
     
-    const { imgbbKey, github } = getKeys();
     const processedImages: string[] = [];
     
-    // logger.info("正在预处理/上传输入图片...", { count: inputImages.length });
-
     for (let i = 0; i < inputImages.length; i++) {
         const img = inputImages[i];
         
         // Check if it is a local base64 image
         if (img.startsWith('data:image')) {
-            let uploadedUrl = '';
-            
-            // Calculate size for debugging
             const head = img.indexOf(',');
             const sizeInBytes = Math.ceil((img.length - head - 1) * 3 / 4);
             const sizeInMB = (sizeInBytes / (1024 * 1024)).toFixed(2);
             
-            // Priority 1: GitHub
-            if (github.token && github.user && github.repo) {
-                 logger.info(`[GitHub] 正在上传图片 ${i+1}/${inputImages.length}... (Size: ${sizeInMB}MB)`);
-                 try {
-                     uploadedUrl = await uploadToGitHub(img, github);
-                     logger.success(`GitHub 上传成功`, { url: uploadedUrl });
-                 } catch (e: any) {
-                     // Explicitly log message object so DebugPanel shows it correctly
-                     logger.error("GitHub 上传失败", { message: e.message, stack: e.stack });
-                     throw e;
-                 }
-            } 
-            // Priority 2: ImgBB
-            else if (imgbbKey) {
-                logger.info(`[ImgBB] 正在上传图片 ${i+1}/${inputImages.length}... (Size: ${sizeInMB}MB)`);
-                try {
-                    uploadedUrl = await uploadToImgBB(img, imgbbKey);
-                    logger.success(`ImgBB 上传成功`, { url: uploadedUrl });
-                } catch (e: any) {
-                    logger.error("ImgBB 上传失败", { message: e.message });
-                    throw e;
-                }
-            } 
-            else {
-                const errMsg = "本地图片必须配置图床。请在设置中配置 GitHub (推荐) 或 ImgBB。";
-                logger.error("缺少图床配置");
-                throw new Error(errMsg);
-            }
+            logger.info(`[R2] 正在上传图片 ${i+1}/${inputImages.length}... (Size: ${sizeInMB}MB)`);
             
-            processedImages.push(uploadedUrl);
+            try {
+                // Upload to Cloudflare R2
+                const uploadedUrl = await uploadToR2(img);
+                logger.success(`R2 上传成功`, { url: uploadedUrl });
+                processedImages.push(uploadedUrl);
+            } catch (e: any) {
+                logger.error("R2 上传失败", { message: e.message });
+                throw e;
+            }
         } else {
             // Already a URL
             processedImages.push(img);
@@ -209,36 +96,78 @@ const runSingleTask = async (
   model: ModelType, 
   aspectRatio: AspectRatio, 
   resolution: Resolution,
-  // Receive already processed URLs
   processedInputImages: string[]
 ): Promise<string> => {
   const { kieKey } = getKeys();
   if (!kieKey) {
-      throw new Error("请配置 Kie API Key");
+      throw new Error("请先登录 (缺少登录码)");
   }
 
+  // Get configuration to check capabilities
+  const modelConfig = getModelConfig(model);
+
+  // Construct Input Payload based on API Docs
   const inputPayload: any = {
     prompt: prompt,
-    resolution: resolution, 
     output_format: "png"
   };
+  
+  // Determine API Model (may change based on input inputs for standard mode)
+  let apiModel = modelConfig.apiValue;
 
-  // Only add aspect_ratio if it's not 'default'
-  if (aspectRatio !== 'default') {
-      inputPayload.aspect_ratio = aspectRatio;
-  }
+  // ---------------------------------------------------------
+  // PARAMETER MAPPING LOGIC
+  // ---------------------------------------------------------
+  
+  if (modelConfig.paramMode === 'pro') {
+      // === PRO Model Strategy ===
+      // Uses 'aspect_ratio' + 'resolution' + 'image_input' (array)
+      
+      if (aspectRatio !== 'default') {
+          inputPayload.aspect_ratio = aspectRatio;
+      }
+      // Always send resolution for Pro
+      inputPayload.resolution = resolution;
 
-  if (processedInputImages.length > 0) {
-    inputPayload.image_input = processedInputImages;
+      // Img2Img for Pro
+      if (processedInputImages.length > 0) {
+          inputPayload.image_input = processedInputImages; // string[]
+      }
+
+  } else {
+      // === STANDARD Model Strategy (Nano Banana) ===
+      // Uses 'image_size'
+      
+      if (aspectRatio === 'default') {
+          // Map default to 'auto' for standard model
+          inputPayload.image_size = "auto";
+      } else {
+          inputPayload.image_size = aspectRatio;
+      }
+      // Note: Do NOT send 'resolution' for Standard model
+
+      // Img2Img for Standard
+      if (processedInputImages.length > 0) {
+          // Switch to Edit model for reference generation
+          apiModel = 'google/nano-banana-edit';
+          // Use 'image_urls' (List of URLs)
+          inputPayload.image_urls = processedInputImages; 
+      }
   }
 
   const requestBody = JSON.stringify({
-    model: model,
+    model: apiModel,
     input: inputPayload
   });
 
   const payloadSizeKB = (new TextEncoder().encode(requestBody).length / 1024).toFixed(2);
-  logger.info(`发送任务请求`, { model, payloadSize: `${payloadSizeKB} KB` });
+  logger.info(`发送任务请求`, { 
+      modelName: model, 
+      apiModel: apiModel, 
+      mode: modelConfig.paramMode,
+      inputKeys: Object.keys(inputPayload),
+      payloadSize: `${payloadSizeKB} KB` 
+  });
 
   // Create Task
   let createRes;
@@ -260,9 +189,7 @@ const runSingleTask = async (
     let errorMsg = `HTTP 错误 ${createRes.status}`;
     try {
       const errData = await createRes.json();
-      if (errData.msg) errorMsg = errData.msg;
-      if (errData.message) errorMsg = errData.message;
-      
+      errorMsg = extractErrorMessage(errData, errorMsg);
       logger.error("API 报错", errData);
     } catch (e) {}
     
@@ -272,12 +199,12 @@ const runSingleTask = async (
   const createData = await createRes.json();
   if (createData.code !== 200 || !createData.data?.taskId) {
     logger.error("创建任务失败", createData);
-    throw new Error(createData.message || createData.msg || "任务创建失败");
+    const msg = extractErrorMessage(createData, "任务创建失败");
+    throw new Error(msg);
   }
 
   const taskId = createData.data.taskId;
-  // logger.success(`任务创建成功`, { taskId }); // Reduce noise for batch
-
+  
   // Poll
   return new Promise((resolve, reject) => {
     let attempts = 0;
@@ -296,11 +223,6 @@ const runSingleTask = async (
         const infoData = await infoRes.json();
         const state = infoData.data?.state;
         
-        // Reduce logging noise for polling
-        if (state !== 'processing' && attempts % 5 === 0) {
-             // logger.info(`任务状态: ${state} (${attempts})`);
-        }
-
         if (state === 'success') {
           try {
             const resultObj = JSON.parse(infoData.data.resultJson);
@@ -314,7 +236,8 @@ const runSingleTask = async (
           }
         } else if (state === 'fail') {
           logger.error("任务失败", infoData.data);
-          reject(new Error(infoData.data?.failMsg || "生成失败"));
+          const failReason = extractErrorMessage(infoData.data, "生成失败");
+          reject(new Error(failReason));
         } else {
           setTimeout(poll, POLL_INTERVAL);
         }
@@ -329,15 +252,13 @@ const runSingleTask = async (
 export const generateImageContent = async (params: GenerateImageParams): Promise<string[]> => {
   logger.info(`开始生成任务 (x${params.batchSize})...`);
   
-  // 1. Upload/Prepare images ONCE before starting tasks
   let readyImages: string[] = [];
   try {
       readyImages = await prepareInputImages(params.inputImages || []);
   } catch (e: any) {
-      throw e; // Stop if upload fails
+      throw e; 
   }
 
-  // 2. Run tasks in parallel using the SAME uploaded URLs
   const promises = [];
   for (let i = 0; i < params.batchSize; i++) {
     promises.push(runSingleTask(

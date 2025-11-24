@@ -1,6 +1,7 @@
 
-export type AspectRatio = 'default' | '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9' | '21:9';
-export type ModelType = 'nano-banana' | 'nano-banana-pro';
+
+export type AspectRatio = 'default' | '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9' | '21:9' | '5:4' | '4:5';
+export type ModelType = string;
 export type NodeColor = 'default' | 'red' | 'yellow' | 'green' | 'chocolate';
 export type NodeType = 'generation' | 'upload';
 export type Resolution = '1K' | '2K' | '4K';

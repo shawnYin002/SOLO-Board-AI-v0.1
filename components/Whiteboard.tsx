@@ -4,6 +4,7 @@ import { NodeData, Connection, Viewport, NodeType } from '../types';
 import { NodeCard } from './NodeCard';
 import { ConnectionLine } from './ConnectionLine';
 import { generateImageContent } from '../services/geminiService';
+import { DEFAULT_MODEL_ID } from '../models';
 import { DebugPanel } from './DebugPanel';
 import { AuthModal } from './AuthModal';
 import { SessionHistoryDock } from './SessionHistoryDock';
@@ -101,7 +102,7 @@ export const Whiteboard: React.FC = () => {
         x: x - (NODE_WIDTH / 2),
         y: y - 100, 
         prompt: '',
-        model: 'nano-banana-pro',
+        model: DEFAULT_MODEL_ID,
         aspectRatio: '9:16', // Default 9:16
         resolution: '2K',   // Default 2K
         generatedImages: [],
@@ -404,7 +405,7 @@ export const Whiteboard: React.FC = () => {
               addNode(x + (i * 20), y + (i * 20), {
                   type: 'upload',
                   uploadedImage: ev.target?.result as string,
-                  model: 'nano-banana-pro'
+                  model: DEFAULT_MODEL_ID
               });
           };
           reader.readAsDataURL(file);
