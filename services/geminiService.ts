@@ -1,9 +1,9 @@
 
-
 import { ModelType, AspectRatio, Resolution } from '../types';
 import { getModelConfig } from '../models';
 import { logger } from './logger';
 import { uploadToR2 } from './r2';
+import { DEFAULT_KIE_API_KEY } from '../config';
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1/jobs';
 
@@ -40,6 +40,12 @@ const extractErrorMessage = (data: any, defaultMsg: string): string => {
 // Helper to get keys
 const getKeys = () => {
   let kieKey = localStorage.getItem('kie_api_key') || '';
+  
+  // Check default key if local is empty
+  if (!kieKey && DEFAULT_KIE_API_KEY) {
+      kieKey = DEFAULT_KIE_API_KEY;
+  }
+
   if (kieKey.toLowerCase().startsWith('bearer ')) {
     kieKey = kieKey.substring(7).trim();
   }
@@ -100,7 +106,7 @@ const runSingleTask = async (
 ): Promise<string> => {
   const { kieKey } = getKeys();
   if (!kieKey) {
-      throw new Error("请先登录 (缺少登录码)");
+      throw new Error("请先登录 (缺少登录码/API Key)");
   }
 
   // Get configuration to check capabilities
@@ -193,6 +199,11 @@ const runSingleTask = async (
       logger.error("API 报错", errData);
     } catch (e) {}
     
+    // Check for specific R2 permission errors that might be proxied
+    if (errorMsg.includes("access permissions")) {
+         errorMsg += " (可能是 R2 链接失效或 API Key 权限不足)";
+    }
+
     throw new Error(errorMsg);
   }
 

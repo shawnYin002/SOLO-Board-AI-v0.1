@@ -1,14 +1,15 @@
-
 import React, { useState, useEffect } from 'react';
-import { Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Sparkles, ArrowRight, ShieldCheck, Save } from 'lucide-react';
+import { DEFAULT_KIE_API_KEY } from '../config';
 
 interface AuthModalProps {
   onAuthenticated: () => void;
   isOpen?: boolean;
   onClose?: () => void;
+  isSettingsMode?: boolean;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: externalIsOpen, onClose }) => {
+export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: externalIsOpen, onClose, isSettingsMode }) => {
   const [apiKey, setApiKey] = useState('');
   const [internalIsOpen, setInternalIsOpen] = useState(false);
 
@@ -16,18 +17,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: e
   const showModal = externalIsOpen !== undefined ? externalIsOpen : internalIsOpen;
 
   useEffect(() => {
-    const storedKieKey = localStorage.getItem('kie_api_key');
-    if (storedKieKey) setApiKey(storedKieKey);
-
-    // Initial load check
-    if (externalIsOpen === undefined) {
-        if (!storedKieKey) {
-            setInternalIsOpen(true);
-        } else {
-            onAuthenticated();
+    // 逻辑修正：
+    // 1. 如果是“设置模式”(isSettingsMode=true)，我们需要回显当前的 Key 方便用户修改。
+    // 2. 如果是“登录模式”(isSettingsMode=false)，根据用户需求，我们要强制清空，不读取缓存，不自动填充。
+    
+    if (isSettingsMode) {
+        const storedKieKey = localStorage.getItem('kie_api_key');
+        if (storedKieKey) {
+            setApiKey(storedKieKey);
         }
+    } else {
+        // 登录模式：强制清空状态
+        setApiKey('');
     }
-  }, [externalIsOpen, onAuthenticated]);
+
+    // Initial load check for internal usage (if not controlled by parent)
+    if (externalIsOpen === undefined) {
+        // If we have a hardcoded default key AND we are NOT forcing a logout/re-login flow
+        // (This logic is mostly legacy if controlled by App.tsx, but kept for safety)
+        const storedKieKey = localStorage.getItem('kie_api_key');
+        if (DEFAULT_KIE_API_KEY && !storedKieKey) {
+             onAuthenticated();
+             return;
+        }
+        setInternalIsOpen(true);
+    }
+  }, [externalIsOpen, isSettingsMode]);
 
   const handleSave = () => {
     if (apiKey.trim()) {
@@ -56,7 +71,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: e
           
           <h2 className="text-2xl font-bold text-white tracking-tight mb-2">SOLO Board AI</h2>
           <p className="text-slate-400 text-sm font-medium">
-             欢迎回来，开启您的创意之旅
+             {isSettingsMode ? "更新您的登录配置" : "欢迎回来，开启您的创意之旅"}
           </p>
         </div>
         
@@ -69,7 +84,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: e
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="请输入登录码"
+              placeholder={DEFAULT_KIE_API_KEY ? "已使用默认 API Key" : "请输入登录码"}
+              autoComplete="off" 
+              name="kie-api-key-input"
               className="w-full px-4 py-3.5 bg-slate-900/50 border border-slate-800 rounded-xl focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all text-sm text-white placeholder-slate-600 text-center tracking-widest"
             />
           </div>
@@ -79,15 +96,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated, isOpen: e
               disabled={!apiKey.trim()}
               className="w-full bg-gradient-to-r from-slate-200 to-white text-slate-900 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-white/10"
           >
-              进入工作台 <ArrowRight size={16} />
+              {isSettingsMode ? (
+                  <>保存设置 <Save size={16} /></>
+              ) : (
+                  <>进入工作台 <ArrowRight size={16} /></>
+              )}
           </button>
         </div>
         
-        <div className="p-5 text-center border-t border-slate-800 bg-slate-950/50">
-             <p className="text-[10px] text-slate-600 font-mono">
-                 SECURE SESSION • R2 ENABLED
-             </p>
-        </div>
+        {isSettingsMode && (
+             <div className="absolute top-2 right-2">
+                 <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-colors">取消</button>
+             </div>
+        )}
+        
+        {!isSettingsMode && (
+            <div className="p-5 text-center border-t border-slate-800 bg-slate-950/50">
+                <p className="text-[10px] text-slate-600 font-mono">
+                    SECURE SESSION • R2 ENABLED
+                </p>
+            </div>
+        )}
 
       </div>
     </div>
