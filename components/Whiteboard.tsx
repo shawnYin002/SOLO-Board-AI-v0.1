@@ -4,6 +4,7 @@ import { NodeData, Connection, Viewport, NodeType } from '../types';
 import { NodeCard } from './NodeCard';
 import { ConnectionLine } from './ConnectionLine';
 import { generateImageContent } from '../services/geminiService';
+import { DEFAULT_MODEL_ID } from '../models';
 import { DebugPanel } from './DebugPanel';
 import { AuthModal } from './AuthModal';
 import { SessionHistoryDock } from './SessionHistoryDock';
@@ -11,7 +12,9 @@ import { Plus, ImagePlus, X, Palette, Sun, Moon, Wand2, ArrowLeftRight, Bug, Set
 
 const NODE_WIDTH = 320;
 
-export const Whiteboard: React.FC = () => {
+interface WhiteboardProps {}
+
+export const Whiteboard: React.FC<WhiteboardProps> = () => {
   const [nodes, setNodes] = useState<NodeData[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -25,7 +28,7 @@ export const Whiteboard: React.FC = () => {
 
   // Settings / Auth Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
+  
   // Session History State
   const [history, setHistory] = useState<{ id: string, url: string, timestamp: number }[]>([]);
 
@@ -101,7 +104,7 @@ export const Whiteboard: React.FC = () => {
         x: x - (NODE_WIDTH / 2),
         y: y - 100, 
         prompt: '',
-        model: 'nano-banana-pro',
+        model: DEFAULT_MODEL_ID,
         aspectRatio: '9:16', // Default 9:16
         resolution: '2K',   // Default 2K
         generatedImages: [],
@@ -404,7 +407,7 @@ export const Whiteboard: React.FC = () => {
               addNode(x + (i * 20), y + (i * 20), {
                   type: 'upload',
                   uploadedImage: ev.target?.result as string,
-                  model: 'nano-banana-pro'
+                  model: DEFAULT_MODEL_ID
               });
           };
           reader.readAsDataURL(file);
@@ -514,10 +517,11 @@ export const Whiteboard: React.FC = () => {
         <button 
            onClick={() => setIsSettingsOpen(true)}
            className={`p-2 rounded-full shadow-md transition-all ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
-           title="设置"
+           title="API 设置"
         >
-            <Settings size={20} />
+           <Settings size={20} />
         </button>
+
         <button 
            onClick={toggleTheme}
            className={`p-2 rounded-full shadow-md transition-all ${isDarkMode ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700' : 'bg-white text-slate-600 hover:bg-slate-100'}`}
@@ -675,7 +679,13 @@ export const Whiteboard: React.FC = () => {
       </div>
       
       {showDebugPanel && <DebugPanel onClose={() => setShowDebugPanel(false)} />}
-      <AuthModal isOpen={isSettingsOpen} onAuthenticated={() => {}} onClose={() => setIsSettingsOpen(false)} />
+      <AuthModal 
+        isOpen={isSettingsOpen} 
+        onAuthenticated={() => {}} 
+        onClose={() => setIsSettingsOpen(false)} 
+        // Force settings mode behavior (no auto close on valid key)
+        isSettingsMode={true}
+      />
 
       {contextMenu && (
         <div 

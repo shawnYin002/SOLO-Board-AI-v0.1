@@ -1,20 +1,39 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# SOLO Board AI
 
-# Run and deploy your AI Studio app
+A whiteboard-style generative AI interface powered by Google Gemini models. This application allows users to generate, edit, and organize images in a spatial canvas environment.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1wkI5n0tovpBXSo7_nMxLl_Gx4dCIy3i7
+- **Infinite Canvas**: Drag, zoom, and pan across an infinite whiteboard.
+- **Node-Based Workflow**: Connect generation nodes to create workflows.
+- **Multi-Model Support**: Switch between Nano Banana and Pro models.
+- **Image Upload & Hosting**: 
+  - Drag & drop local images.
+  - Integration with **GitHub** and **ImgBB** for image hosting.
+- **Visual Stacking**: Generated iterations are stacked on nodes for easy management.
+- **Session History**: Quickly access and restore previously generated images.
 
-## Run Locally
+## Tech Stack
 
-**Prerequisites:**  Node.js
+- **Framework**: React 19 + Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **AI Integration**: Google Gemini API (via custom proxy or direct)
 
+## Setup
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. Clone the repository.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+## Configuration
+
+Click the **Settings (Gear Icon)** in the top right to configure:
+- **Kie/Gemini API Key**: Required for generation.
+- **GitHub Token / ImgBB Key**: Required for uploading local reference images.

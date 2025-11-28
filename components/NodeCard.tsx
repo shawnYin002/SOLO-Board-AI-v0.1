@@ -1,7 +1,9 @@
 
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { NodeData, AspectRatio, NodeColor, Resolution } from '../types';
-import { Trash2, Download, Image as ImageIcon, Loader2, Play, Maximize2, Layers, Unlock, Check } from 'lucide-react';
+import { MODEL_OPTIONS, getModelBadge, getModelConfig } from '../models';
+import { Trash2, Download, Image as ImageIcon, Loader2, Play, Maximize2, Layers, Unlock, Check, AlertTriangle, ChevronDown, Lock } from 'lucide-react';
 
 interface NodeCardProps {
   node: NodeData;
@@ -19,12 +21,6 @@ interface NodeCardProps {
   onReorderInputs: (nodeId: string, fromIndex: number, toIndex: number) => void;
   onUnstack: (nodeId: string, imageIndex: number) => void;
 }
-
-// Aspect ratio visual logic
-const getAspectRatioStyle = (ratio: AspectRatio) => {
-  if (ratio === 'default') return 'auto'; // Let CSS decide based on content or fallback
-  return ratio.replace(':', '/');
-};
 
 export const NodeCard: React.FC<NodeCardProps> = ({
   node,
@@ -51,6 +47,34 @@ export const NodeCard: React.FC<NodeCardProps> = ({
     : node.uploadedImage;
 
   const isUploadCard = node.type === 'upload';
+  
+  // Get current model configuration
+  const modelConfig = getModelConfig(node.model);
+
+  // Auto-correct invalid settings when model changes (via effect)
+  // This ensures if we switch from Pro (4K) to Banana (1K), it updates immediately
+  useEffect(() => {
+      if (node.type === 'generation') {
+          const updates: Partial<NodeData> = {};
+          let needsUpdate = false;
+
+          // Enforce valid resolutions (e.g., standard model forces 1K)
+          if (!modelConfig.validResolutions.includes(node.resolution)) {
+              updates.resolution = modelConfig.defaultResolution;
+              needsUpdate = true;
+          }
+          // Enforce valid ratios
+          if (!modelConfig.validRatios.includes(node.aspectRatio)) {
+              updates.aspectRatio = modelConfig.defaultRatio;
+              needsUpdate = true;
+          }
+
+          if (needsUpdate) {
+              onUpdate(node.id, updates);
+          }
+      }
+  }, [node.model, node.resolution, node.aspectRatio, node.id, onUpdate, modelConfig]);
+
 
   // --- Dynamic Styles based on Theme ---
   const getThemeClasses = () => {
@@ -252,8 +276,9 @@ export const NodeCard: React.FC<NodeCardProps> = ({
                 </div>
               )}
             </div>
-            <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              {node.model === 'nano-banana-pro' ? 'Pro' : 'Banana'}
+            {/* Model Badge */}
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-300 text-slate-600'}`}>
+              {getModelBadge(node.model)}
             </span>
           </div>
 
@@ -389,32 +414,48 @@ export const NodeCard: React.FC<NodeCardProps> = ({
 
             <div className="flex items-center justify-between gap-1">
                 {/* Ratio Selector */}
-                <select
-                  className={`text-[10px] p-1 border rounded flex-1 min-w-0 outline-none ${theme.input}`}
-                  value={node.aspectRatio}
-                  onChange={(e) => onUpdate(node.id, { aspectRatio: e.target.value as AspectRatio })}
-                  title="生成比例"
-                >
-                  <option value="default">默认 (同输入)</option>
-                  <option value="9:16">▯ 9:16</option>
-                  <option value="16:9">▭ 16:9</option>
-                  <option value="1:1">⬜ 1:1</option>
-                  <option value="3:4">▯ 3:4</option>
-                  <option value="4:3">▭ 4:3</option>
-                  <option value="21:9">▭ 21:9</option>
-                </select>
+                <div className={`flex-1 relative ${modelConfig.validRatios.length <= 1 ? 'opacity-60' : ''}`}>
+                    <select
+                      className={`w-full text-[10px] p-1 border rounded flex-1 min-w-0 outline-none ${theme.input} ${modelConfig.validRatios.length <= 1 ? 'cursor-not-allowed bg-slate-100' : ''}`}
+                      value={node.aspectRatio}
+                      onChange={(e) => onUpdate(node.id, { aspectRatio: e.target.value as AspectRatio })}
+                      disabled={modelConfig.validRatios.length <= 1}
+                      title="生成比例"
+                    >
+                      {/* Only render supported options */}
+                      {modelConfig.validRatios.includes('default') && <option value="default">默认 (同输入)</option>}
+                      {modelConfig.validRatios.includes('9:16') && <option value="9:16">▯ 9:16</option>}
+                      {modelConfig.validRatios.includes('16:9') && <option value="16:9">▭ 16:9</option>}
+                      {modelConfig.validRatios.includes('1:1') && <option value="1:1">⬜ 1:1</option>}
+                      {modelConfig.validRatios.includes('3:4') && <option value="3:4">▯ 3:4</option>}
+                      {modelConfig.validRatios.includes('4:3') && <option value="4:3">▭ 4:3</option>}
+                      {modelConfig.validRatios.includes('21:9') && <option value="21:9">▭ 21:9</option>}
+                      {modelConfig.validRatios.includes('5:4') && <option value="5:4">▭ 5:4</option>}
+                      {modelConfig.validRatios.includes('4:5') && <option value="4:5">▯ 4:5</option>}
+                    </select>
+                     {modelConfig.validRatios.length <= 1 && (
+                        <Lock size={8} className="absolute right-2 top-1/2 -translate-y-1/2 opacity-50" />
+                    )}
+                </div>
 
                  {/* Resolution Selector */}
-                 <select
-                  className={`text-[10px] p-1 border rounded flex-1 min-w-0 outline-none ${theme.input}`}
-                  value={node.resolution}
-                  onChange={(e) => onUpdate(node.id, { resolution: e.target.value as Resolution })}
-                  title="分辨率"
-                >
-                  <option value="2K">2K</option>
-                  <option value="1K">1K</option>
-                  <option value="4K">4K</option>
-                </select>
+                 <div className={`flex-1 relative ${modelConfig.validResolutions.length <= 1 ? 'opacity-60' : ''}`}>
+                    <select
+                      className={`w-full text-[10px] p-1 border rounded flex-1 min-w-0 outline-none ${theme.input} ${modelConfig.validResolutions.length <= 1 ? 'cursor-not-allowed bg-slate-100' : ''}`}
+                      value={node.resolution}
+                      onChange={(e) => onUpdate(node.id, { resolution: e.target.value as Resolution })}
+                      disabled={modelConfig.validResolutions.length <= 1}
+                      title="分辨率"
+                    >
+                      {/* Only render supported options */}
+                      {modelConfig.validResolutions.includes('1K') && <option value="1K">1K</option>}
+                      {modelConfig.validResolutions.includes('2K') && <option value="2K">2K</option>}
+                      {modelConfig.validResolutions.includes('4K') && <option value="4K">4K</option>}
+                    </select>
+                    {modelConfig.validResolutions.length <= 1 && (
+                        <Lock size={8} className="absolute right-2 top-1/2 -translate-y-1/2 opacity-50" />
+                    )}
+                 </div>
 
                 {/* Batch Size Selector */}
                 <div className={`flex items-center border rounded overflow-hidden flex-none ${isDarkMode ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white'}`}>
@@ -430,34 +471,63 @@ export const NodeCard: React.FC<NodeCardProps> = ({
                    </select>
                 </div>
             </div>
+            
+            <div className="flex gap-2 h-9">
+                 {/* Model Selector */}
+                <div className={`relative flex-1 rounded-md border overflow-hidden ${theme.input}`}>
+                    <select
+                        value={node.model}
+                        onChange={(e) => onUpdate(node.id, { model: e.target.value })}
+                        className={`w-full h-full pl-2 pr-6 text-[10px] bg-transparent outline-none appearance-none font-medium cursor-pointer ${isDarkMode ? 'text-slate-200' : 'text-slate-900'}`}
+                        title="选择模型"
+                    >
+                        {MODEL_OPTIONS.map(m => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                    </select>
+                     <div className="absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none opacity-50">
+                        <ChevronDown size={12} />
+                    </div>
+                </div>
 
-            <button
-              onClick={() => onGenerate(node.id)}
-              disabled={node.isGenerating || (!node.prompt && !node.uploadedImage && inputImages.length === 0)}
-              className={`w-full py-2 px-4 rounded-md text-white text-sm font-medium flex items-center justify-center gap-2 transition-all ${
-                node.isGenerating
-                  ? 'bg-slate-400 cursor-not-allowed'
-                  : 'bg-slate-900 hover:bg-slate-800 active:scale-95 shadow-md dark:bg-yellow-500 dark:hover:bg-yellow-600 dark:text-slate-900'
-              }`}
-            >
-              {node.isGenerating ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> {node.progress || "生成中..."}
-                </>
-              ) : (
-                <>
-                  <Play size={16} fill="currentColor" /> 生成
-                </>
-              )}
-            </button>
+                {/* Generate Button */}
+                <button
+                onClick={() => onGenerate(node.id)}
+                disabled={node.isGenerating || (!node.prompt && !node.uploadedImage && inputImages.length === 0)}
+                className={`flex-[2] px-4 rounded-md text-white text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                    node.isGenerating
+                    ? 'bg-slate-400 cursor-not-allowed'
+                    : 'bg-slate-900 hover:bg-slate-800 active:scale-95 shadow-md dark:bg-yellow-500 dark:hover:bg-yellow-600 dark:text-slate-900'
+                }`}
+                >
+                {node.isGenerating ? (
+                    <>
+                    <Loader2 size={16} className="animate-spin" /> {node.progress || "生成中..."}
+                    </>
+                ) : (
+                    <>
+                    <Play size={16} fill="currentColor" /> 生成
+                    </>
+                )}
+                </button>
+            </div>
+            
             {node.error && (
-              <p 
-                 className="text-[10px] text-red-500 leading-tight cursor-pointer hover:underline" 
-                 title={node.error}
-                 onClick={() => alert(node.error)}
+              <div 
+                 className="bg-red-500/10 border border-red-500/20 rounded p-2 cursor-pointer hover:bg-red-500/20 transition-colors group/err flex items-start gap-2"
+                 onClick={(e) => { e.stopPropagation(); alert(node.error); }}
+                 title="点击查看完整报错"
               >
-                  {node.error} (点击查看)
-              </p>
+                  <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                      <div className="text-red-500 font-medium text-[10px] truncate leading-tight">
+                         {node.error}
+                      </div>
+                      <div className="text-[8px] text-red-400 opacity-60 group-hover/err:opacity-100 transition-opacity">
+                        点击查看完整原因
+                      </div>
+                  </div>
+              </div>
             )}
           </div>
         </div>
